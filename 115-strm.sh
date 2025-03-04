@@ -283,7 +283,7 @@ generate_strm_files() {
         echo "请输入剔除选项（输入要剔除的目录层级数量，默认为2）："
     fi
     read -r input_exclude_option
-    exclude_option=${input_exclude_option:-2}
+    exclude_option="${input_exclude_option:-$exclude_option}"
 
     # 提示选择更新该是跳过
     echo "如果本次要创建的strm文件已存在，请选择更新还是跳过（上次配置: ${update_existing:-1}）：1. 跳过 2. 更新"
