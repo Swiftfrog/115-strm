@@ -26,7 +26,7 @@ def setup_driver():
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
 
         chromedriver_path = "/usr/bin/chromedriver"
-        service = Service(chromedriver_path, log_path="NUL")  # Windows 使用 "NUL"，Linux/macOS 使用 "/dev/null"
+        service = Service(chromedriver_path)  # Windows 使用 "NUL"，Linux/macOS 使用 "/dev/null"
 
         driver = webdriver.Chrome(service=service, options=options)
         logging.info("Selenium WebDriver 初始化成功。")
@@ -35,13 +35,10 @@ def setup_driver():
         logging.error("Selenium WebDriver 初始化失败")
         raise
 
-def fetch_html_with_selenium(url, max_retries=3):
+def fetch_html_with_selenium(url, driver, max_retries=3):
     """获取 HTML 内容"""
     for attempt in range(max_retries):
-        driver = None
         try:
-            driver = setup_driver()
-
             # 访问目标网页
             driver.get(url)
             logging.info(f"尝试 {attempt + 1}/{max_retries}: 正在访问URL: {url}")
@@ -59,7 +56,7 @@ def fetch_html_with_selenium(url, max_retries=3):
 
             # 等待页面加载完成
             try:
-                wait = WebDriverWait(driver, 15)
+                wait = WebDriverWait(driver, 15, poll_frequency=1)
                 torrent_link = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(text(), '.torrent')]")))
                 logging.info(f"尝试 {attempt + 1}/{max_retries}: 找到 .torrent 字段，页面内容已加载完成。")
             except Exception:
@@ -67,7 +64,6 @@ def fetch_html_with_selenium(url, max_retries=3):
                 raise  # 继续抛出异常以触发重试
 
             html_content = driver.page_source
-            # logging.info("获取到的HTML内容前500字符：\n%s", html_content[:500]) # 调试网页输出是否正常
             return html_content
         except Exception:
             logging.error(f"尝试 {attempt + 1}/{max_retries} 失败")
@@ -77,9 +73,6 @@ def fetch_html_with_selenium(url, max_retries=3):
             else:
                 logging.error("已达到最大重试次数，放弃此URL。")
                 return None
-        finally:
-            if driver:
-                driver.quit()
 
 def extract_date(soup):
     """提取发表时间"""
@@ -233,6 +226,7 @@ def main():
     load_url_index(index_file)
 
     # 判断 output.csv 是否为空，并初始化 insert_mode
+    insert_mode = False
     try:
         with open(output_csv, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
@@ -241,11 +235,14 @@ def main():
     except FileNotFoundError:
         logging.warning("未找到 output.csv 文件，初始化为空。")
         insert_mode = False  # 如果文件为空，则按顺序写入
-
+    # 读取输入文件
     urls = []
     try:
         with open(input_csv, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
+            if "URL" not in reader.fieldnames:
+                logging.error("输入文件缺少 'URL' 列，请检查文件格式。")
+                return
             urls = [row["URL"] for row in reader]
     except FileNotFoundError:
         logging.error(f"未找到输入文件 {input_csv}，请检查文件路径。")
@@ -255,41 +252,45 @@ def main():
         logging.warning("未找到任何URL，请检查输入的CSV文件。")
         return
 
-    batch_data = []
+    # 初始化 WebDriver
+    driver = setup_driver()
+    try:
+        batch_data = []
+        for i, url in enumerate(urls):
+            logging.info(f"正在处理URL ({i + 1}/{len(urls)}): {url}")
 
-    for i, url in enumerate(urls):
-        logging.info(f"正在处理URL ({i + 1}/{len(urls)}): {url}")
+            # 检查是否重复（基于 URL 字段）
+            if is_duplicate(url):
+                continue
 
-        # 检查是否重复（基于 URL 字段）
-        if is_duplicate(url):
-            continue
+            html_content = fetch_html_with_selenium(url, driver)
+            if not html_content:
+                logging.error(f"无法获取HTML内容，跳过URL: {url}")
+                continue
 
-        html_content = fetch_html_with_selenium(url)
-        if not html_content:
-            logging.error(f"无法获取HTML内容，跳过URL: {url}")
-            continue
+            data = extract_data(html_content, url)
+            if not data:
+                logging.error(f"数据提取失败，跳过URL: {url}")
+                continue
 
-        data = extract_data(html_content, url)
-        if not data:
-            logging.error(f"数据提取失败，跳过URL: {url}")
-            continue
+            batch_data.append(data)
 
-        batch_data.append(data)
+            # 如果达到批量大小，则写入 CSV 文件
+            if len(batch_data) >= batch_size:
+                success = update_csv(batch_data, output_csv, insert_mode=insert_mode)
+                if success:
+                    update_url_index([data["LINK"] for data in batch_data], index_file)
+                    logging.info(f"已写入 {batch_size} 条数据到 {output_csv} 文件中！")
+                batch_data.clear()
 
-        # 如果达到批量大小，则写入 CSV 文件
-        if len(batch_data) >= batch_size:
+        # 写入剩余数据（如果有）
+        if batch_data:
             success = update_csv(batch_data, output_csv, insert_mode=insert_mode)
             if success:
                 update_url_index([data["LINK"] for data in batch_data], index_file)
-                logging.info(f"已写入 {batch_size} 条数据到 {output_csv} 文件中！")
-            batch_data.clear()
-
-    # 写入剩余数据（如果有）
-    if batch_data:
-        success = update_csv(batch_data, output_csv, insert_mode=insert_mode)
-        if success:
-            update_url_index([data["LINK"] for data in batch_data], index_file)
-            logging.info(f"已写入剩余 {len(batch_data)} 条数据到 {output_csv} 文件中！")
+                logging.info(f"已写入剩余 {len(batch_data)} 条数据到 {output_csv} 文件中！")
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
     main()
