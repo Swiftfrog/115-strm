@@ -49,9 +49,33 @@ def load_existing_data(csv_file):
         logging.warning("未找到 CSV 文件，初始化为空列表。")
         return []
 
+# 点击按钮
+def click_enter_button(driver, timeout=10):
+    """
+    查找并点击页面上的按钮
+    :param driver: Selenium WebDriver 实例
+    :param timeout: 最大等待时间（秒）
+    """
+    try:
+        wait = WebDriverWait(driver, timeout)
+        enter_button = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "enter-btn")))
+        logging.info("找到按钮并准备点击...")
+        enter_button.click()
+        logging.info("按钮已成功点击。")
+    except Exception as e:
+        logging.warning(f"未找到或无法点击按钮: {e}")
+        raise  # 继续抛出异常以触发重试
+
 # 读取HTML内容
-def fetch_html_with_selenium(url, driver, max_retries=3):
-    """获取 HTML 内容"""
+def fetch_html_with_selenium(url, driver, max_retries=3, first_visit=True):
+    """
+    获取 HTML 内容
+    :param url: 目标网页 URL
+    :param driver: Selenium WebDriver 实例
+    :param max_retries: 最大重试次数
+    :param first_visit: 是否是第一次访问（默认为 True）
+    :return: 页面 HTML 内容或 None
+    """
     for attempt in range(max_retries):
         try:
             # 访问目标网页
@@ -59,15 +83,13 @@ def fetch_html_with_selenium(url, driver, max_retries=3):
             logging.info(f"尝试 {attempt + 1}/{max_retries}: 正在访问URL: {url}")
 
             # 等待按钮加载完成并点击
-            try:
-                wait = WebDriverWait(driver, 10)
-                enter_button = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "enter-btn")))
-                logging.info(f"尝试 {attempt + 1}/{max_retries}: 找到按钮并准备点击...")
-                enter_button.click()
-                logging.info("按钮已点击。")
-            except Exception:
-                logging.warning(f"尝试 {attempt + 1}/{max_retries}: 未找到或无法点击按钮")
-                raise  # 继续抛出异常以触发重试
+            # 如果是第一次访问，尝试点击按钮
+            if first_visit:
+                try:
+                    click_enter_button(driver)  # 调用独立的按钮点击函数
+                except Exception:
+                    logging.warning(f"尝试 {attempt + 1}/{max_retries}: 按钮点击失败")
+                    raise  # 继续抛出异常以触发重试
 
             # 等待页面加载完成
             try:
@@ -256,6 +278,10 @@ def main():
     # 初始化 WebDriver
     driver = setup_driver()
     try:
+
+        # 标志变量：是否是第一次访问
+        first_visit_flag = True
+
         batch_data = []
         for i, url in enumerate(urls):
             logging.info(f"正在处理URL ({i + 1}/{len(urls)}): {url}")
@@ -263,8 +289,14 @@ def main():
             # 检查是否重复（基于 URL 字段）
             if is_duplicate(url):
                 continue
+            # 获取 HTML 内容
+            html_content = fetch_html_with_selenium(url, driver, first_visit=first_visit_flag)
 
-            html_content = fetch_html_with_selenium(url, driver)
+            # 如果是第一次访问且成功获取内容，则更新标志变量
+            if first_visit_flag and html_content:
+                first_visit_flag = False
+
+#            html_content = fetch_html_with_selenium(url, driver)
             if not html_content:
                 logging.error(f"无法获取HTML内容，跳过URL: {url}")
                 continue
