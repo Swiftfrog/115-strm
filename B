@@ -1,0 +1,36 @@
+def fetch_html_with_selenium(url, driver, max_retries=3):
+    """
+    使用 Selenium 获取页面 HTML 内容，并智能等待页面加载完成。
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            driver.get(url)
+            debug_log(f"第 {attempt} 次尝试：成功加载页面: {url}")
+
+            # 等待按钮加载完成并点击
+            try:
+                wait = WebDriverWait(driver, 10)
+                enter_button = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "enter-btn")))
+                debug_log("按钮已加载")
+                enter_button.click()
+                debug_log("按钮已成功点击")
+            except Exception:
+                debug_log(f"第 {attempt} 次尝试：未找到或无法点击按钮: {e}")
+
+            # 等待关键元素加载完成
+            try:
+                wait = WebDriverWait(driver, 10)
+                wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "tbody[id^='normalthread_'] a[href*='thread-']")))
+                debug_log("页面内容已加载完成")
+                html_content = driver.page_source
+                debug_log(f"成功提取页面 HTML 内容，长度为 {len(html_content)} 字节。")
+                return html_content
+            except Exception:
+                debug_log(f"第 {attempt} 次尝试：页面内容加载失败: {e}")
+                if attempt == max_retries:
+                    debug_log("达到最大重试次数，放弃加载页面。")
+                    return None
+        except Exception:
+            debug_log(f"第 {attempt} 次尝试：页面加载失败: {e}")
+            if attempt == max_retries:
+                return None
